@@ -44,9 +44,9 @@ export default function Home({ onAddMember }: HomeProps) {
         total: dashboardStats.total,
         byGovernorate: dashboardStats.byGovernorate
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch data:', err);
-      showToast('خطأ في تحميل البيانات من قاعدة البيانات', 'error');
+      showToast(`خطأ في تحميل البيانات من قاعدة البيانات: ${err.code || err.message}`, 'error');
     } finally {
       setLoading(false);
     }

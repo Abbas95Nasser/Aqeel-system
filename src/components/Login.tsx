@@ -27,7 +27,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
         setError('خطأ في البريد الإلكتروني أو كلمة المرور');
       } else {
-        setError('حدث خطأ أثناء تسجيل الدخول. يرجى المحاولة لاحقاً.');
+        setError(`حدث خطأ أثناء تسجيل الدخول: ${err.code || err.message}`);
       }
     } finally {
       setLoading(false);

@@ -79,7 +79,7 @@ export const memberService = {
 
   // Get all members
   async getAllMembers(): Promise<Member[]> {
-    const q = query(collection(db, COLLECTION_NAME), orderBy("metadata.createdAt", "desc"));
+    const q = query(collection(db, COLLECTION_NAME));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ 
       id: doc.id, 
