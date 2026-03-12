@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Member documents and images
+    match /members/{memberId}/{allPaths=**} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}

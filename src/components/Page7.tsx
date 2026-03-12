@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, X } from 'lucide-react';
+import { Upload, X, Loader2 } from 'lucide-react';
+import { storageService } from '../services/storageService';
 
-const ExperienceImageUpload = ({ storageKey }: { storageKey: string }) => {
+const ExperienceImageUpload = ({ storageKey, memberId }: { storageKey: string, memberId: string }) => {
   const [image, setImage] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -19,25 +21,29 @@ const ExperienceImageUpload = ({ storageKey }: { storageKey: string }) => {
     return () => window.removeEventListener('clearForm', handleClear);
   }, [storageKey]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       if (!file.type.startsWith('image/')) {
         alert('يرجى اختيار ملف صورة صالح.');
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        setImage(base64String);
-        try {
-          localStorage.setItem(storageKey, base64String);
-        } catch (err) {
-          console.warn('Storage quota exceeded, image not saved to localStorage');
-          alert('حجم الصورة كبير جداً، لم يتم حفظها في الذاكرة المؤقتة ولكن ستظهر في الطباعة.');
-        }
-      };
-      reader.readAsDataURL(file);
+      
+      setIsUploading(true);
+      try {
+        // Extract section from storageKey: memberForm_${memberId}_exp1_image
+        const parts = storageKey.split('_');
+        const section = parts[2]; // exp1 or exp2
+
+        const url = await storageService.uploadMemberImage(memberId, section, file);
+        setImage(url);
+        localStorage.setItem(storageKey, url);
+      } catch (err) {
+        console.error('Upload failed:', err);
+        alert('فشل في رفع الصورة إلى السحابة.');
+      } finally {
+        setIsUploading(false);
+      }
     }
   };
 
@@ -78,10 +84,11 @@ const ExperienceImageUpload = ({ storageKey }: { storageKey: string }) => {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded border border-black text-xs font-bold transition-colors shadow-sm no-print"
+          disabled={isUploading}
+          className="flex items-center gap-1 bg-white hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded border border-black text-xs font-bold transition-colors shadow-sm no-print disabled:opacity-50"
           title="إرفاق صورة"
         >
-          <Upload className="w-4 h-4" />
+          {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
           إرفاق صورة
         </button>
       )}
@@ -106,13 +113,13 @@ export default function Page7({ memberId }: { memberId: string }) {
             <div className="border-b-2 border-dotted border-black h-8 relative flex-1">
               <input type="text" className="absolute bottom-0 w-full outline-none bg-transparent" required title="الخبرة 1" />
             </div>
-            <ExperienceImageUpload storageKey={`memberForm_${memberId}_exp1_image`} />
+            <ExperienceImageUpload storageKey={`memberForm_${memberId}_exp1_image`} memberId={memberId} />
           </div>
           <div className="flex items-end gap-4">
             <div className="border-b-2 border-dotted border-black h-8 relative flex-1">
               <input type="text" className="absolute bottom-0 w-full outline-none bg-transparent" />
             </div>
-            <ExperienceImageUpload storageKey={`memberForm_${memberId}_exp2_image`} />
+            <ExperienceImageUpload storageKey={`memberForm_${memberId}_exp2_image`} memberId={memberId} />
           </div>
         </div>
 

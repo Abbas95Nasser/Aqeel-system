@@ -1,18 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, Users, FileText, Activity, Edit, Trash2, ChevronUp, ChevronDown, ArrowUpDown, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react';
+import { Search, UserPlus, Users, FileText, Activity, Edit, Trash2, ChevronUp, ChevronDown, ArrowUpDown, CheckCircle, AlertCircle, X, Loader2, Download, Filter, MapPin, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { memberService } from '../services/memberService';
+import { Member } from '../types';
+import * as XLSX from 'xlsx';
 
 interface HomeProps {
   onAddMember: (memberId?: string) => void;
-}
-
-interface Member {
-  id: string;
-  name: string;
-  phone: string;
-  governorate: string;
-  dateAdded: string;
-  timestamp?: number;
 }
 
 type SortKey = 'name' | 'phone' | 'governorate' | 'dateAdded';
@@ -22,6 +16,7 @@ type ToastType = 'success' | 'error';
 export default function Home({ onAddMember }: HomeProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [memberToDelete, setMemberToDelete] = useState<string | null>(null);
@@ -29,21 +24,32 @@ export default function Home({ onAddMember }: HomeProps) {
     key: 'dateAdded',
     order: 'desc'
   });
+  const [stats, setStats] = useState<{ total: number; byGovernorate: Record<string, number> }>({
+    total: 0,
+    byGovernorate: {}
+  });
 
   useEffect(() => {
-    const savedMembers = localStorage.getItem('members_list');
-    if (savedMembers) {
-      try {
-        setMembers(JSON.parse(savedMembers));
-      } catch (e) {
-        console.error('Failed to parse members list', e);
-      }
-    }
+    fetchData();
   }, []);
 
-  const saveMembers = (updatedMembers: Member[]) => {
-    setMembers(updatedMembers);
-    localStorage.setItem('members_list', JSON.stringify(updatedMembers));
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const allMembers = await memberService.getAllMembers();
+      setMembers(allMembers);
+      
+      const dashboardStats = await memberService.getStats();
+      setStats({
+        total: dashboardStats.total,
+        byGovernorate: dashboardStats.byGovernorate
+      });
+    } catch (err) {
+      console.error('Failed to fetch data:', err);
+      showToast('خطأ في تحميل البيانات من قاعدة البيانات', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const showToast = (message: string, type: ToastType = 'success') => {
@@ -56,39 +62,23 @@ export default function Home({ onAddMember }: HomeProps) {
     setMemberToDelete(id);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!memberToDelete) return;
     
     const id = memberToDelete;
     try {
-      setMembers(prevMembers => {
-        const updatedMembers = prevMembers.filter(m => m.id !== id);
-        localStorage.setItem('members_list', JSON.stringify(updatedMembers));
-        return updatedMembers;
-      });
-      
-      // Also remove from selectedIds if it was there
+      await memberService.deleteMember(id);
+      setMembers(prev => prev.filter(m => m.id !== id));
       setSelectedIds(prev => {
-        if (prev.has(id)) {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        }
-        return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
       });
-      
-      // Clean up all associated data for this member
-      const keys = Object.keys(localStorage);
-      keys.forEach(key => {
-        if (key.includes(id)) {
-          localStorage.removeItem(key);
-        }
-      });
-      
-      showToast('تم حذف المنتمي وجميع بياناته بنجاح');
+      showToast('تم حذف المنتمي بنجاح');
+      fetchData(); // Refresh stats
     } catch (err) {
       console.error('Delete failed:', err);
-      showToast('حدث خطأ أثناء محاولة الحذف', 'error');
+      showToast('حدث خطأ أثناء محاولة الحذف من قاعدة البيانات', 'error');
     } finally {
       setMemberToDelete(null);
     }
@@ -110,15 +100,13 @@ export default function Home({ onAddMember }: HomeProps) {
     .sort((a, b) => {
       if (!sortConfig.key || !sortConfig.order) return 0;
       
-      let valA: any = a[sortConfig.key] || '';
-      let valB: any = b[sortConfig.key] || '';
+      let valA: any = (a as any)[sortConfig.key] || '';
+      let valB: any = (b as any)[sortConfig.key] || '';
       
-      // Special handling for dateAdded sorting using timestamp if available
       if (sortConfig.key === 'dateAdded') {
         valA = a.timestamp || 0;
         valB = b.timestamp || 0;
       } else {
-        // For strings, use localeCompare for better Arabic support
         if (typeof valA === 'string' && typeof valB === 'string') {
           return sortConfig.order === 'asc' 
             ? valA.localeCompare(valB, 'ar') 
@@ -135,7 +123,7 @@ export default function Home({ onAddMember }: HomeProps) {
     if (selectedIds.size === processedMembers.length && processedMembers.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(processedMembers.map(m => m.id)));
+      setSelectedIds(new Set(processedMembers.map(m => m.id as string)));
     }
   };
 
@@ -150,32 +138,59 @@ export default function Home({ onAddMember }: HomeProps) {
     setSelectedIds(newSelected);
   };
 
-  const downloadCSV = () => {
-    const selectedMembers = members.filter(m => selectedIds.has(m.id));
-    if (selectedMembers.length === 0) return;
+  const exportToExcel = () => {
+    const selectedMembers = members.filter(m => selectedIds.has(m.id as string));
+    const dataToExport = selectedMembers.length > 0 ? selectedMembers : processedMembers;
+    
+    if (dataToExport.length === 0) {
+      showToast('لا توجد بيانات لتصديرها', 'error');
+      return;
+    }
 
-    const headers = ['الاسم', 'الهاتف', 'المحافظة', 'تاريخ الإضافة'];
-    const rows = selectedMembers.map(m => [
-      m.name || '',
-      m.phone || '',
-      m.governorate || '',
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport.map(m => ({
+      'المعرف': m.id,
+      'الاسم الكامل': m.name || m.personalInformation?.fullName,
+      'الهاتف': m.phone || m.housingInformation?.phone,
+      'المحافظة': m.governorate || m.housingInformation?.governorate,
+      'تاريخ الإضافة': m.dateAdded
+    })));
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "المنتمين");
+    
+    XLSX.writeFile(workbook, `Aqeel_System_Members_${new Date().toISOString().split('T')[0]}.xlsx`);
+    showToast(`تم تصدير ${dataToExport.length} سجل بنجاح`);
+  };
+
+  const downloadCSV = () => {
+    const selectedMembers = members.filter(m => selectedIds.has(m.id as string));
+    const dataToExport = selectedMembers.length > 0 ? selectedMembers : processedMembers;
+    
+    if (dataToExport.length === 0) return;
+
+    const headers = ['المعرف', 'الاسم', 'الهاتف', 'المحافظة', 'تاريخ الإضافة'];
+    const rows = dataToExport.map(m => [
+      m.id || '',
+      m.name || m.personalInformation?.fullName || '',
+      m.phone || m.housingInformation?.phone || '',
+      m.governorate || m.housingInformation?.governorate || '',
       m.dateAdded || ''
     ]);
 
     const csvContent = [
       headers.join(','),
-      ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(','))
+      ...rows.map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `سجل_المنتمين_${new Date().toLocaleDateString('ar-EG')}.csv`);
+    link.setAttribute('download', `Aqeel_System_Members_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast(`تم تصدير ${selectedMembers.length} منتمين بنجاح`);
+    showToast(`تم تصدير ${dataToExport.length} سجل بنجاح`);
   };
 
   const SortIndicator = ({ column }: { column: SortKey }) => {
@@ -184,6 +199,15 @@ export default function Home({ onAddMember }: HomeProps) {
     if (sortConfig.order === 'desc') return <ChevronDown className="w-3 h-3 text-blue-600" />;
     return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
   };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+        <p className="text-gray-500 font-bold animate-pulse">جاري تحميل البيانات من Firestore...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 relative">
@@ -195,207 +219,109 @@ export default function Home({ onAddMember }: HomeProps) {
             initial={{ opacity: 0, y: -40, x: '-50%', scale: 0.8, filter: 'blur(10px)' }}
             animate={{ opacity: 1, y: 0, x: '-50%', scale: 1, filter: 'blur(0px)' }}
             exit={{ opacity: 0, y: -20, x: '-50%', scale: 0.9, filter: 'blur(5px)' }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            drag="y"
-            dragConstraints={{ top: 0, bottom: 0 }}
-            onDragEnd={(_, info) => {
-              if (info.offset.y < -50) setToast(null);
-            }}
-            className={`fixed top-6 left-1/2 flex items-center gap-4 px-6 py-4 rounded-[24px] shadow-[0_30px_60px_rgba(0,0,0,0.12)] z-[200] font-bold no-print min-w-[360px] border-2 backdrop-blur-xl cursor-grab active:cursor-grabbing ${
-              toast.type === 'success' 
-                ? 'bg-white/90 border-emerald-100 text-emerald-900' 
-                : 'bg-white/90 border-red-100 text-red-900'
+            className={`fixed top-6 left-1/2 flex items-center gap-4 px-6 py-4 rounded-[24px] shadow-[0_30px_60px_rgba(0,0,0,0.12)] z-[200] font-bold no-print min-w-[360px] border-2 backdrop-blur-xl ${
+              toast.type === 'success' ? 'bg-white/90 border-emerald-100 text-emerald-900' : 'bg-white/90 border-red-100 text-red-900'
             }`}
           >
-            <div className={`p-3 rounded-2xl ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'} shadow-inner`}>
-              {toast.type === 'success' ? (
-                <CheckCircle className="w-6 h-6 shrink-0" />
-              ) : (
-                <AlertCircle className="w-6 h-6 shrink-0" />
-              )}
+            <div className={`p-3 rounded-2xl ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+              {toast.type === 'success' ? <CheckCircle className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
             </div>
             <div className="flex flex-col flex-1">
-              <span className="text-sm font-black leading-tight tracking-tight">{toast.message}</span>
-              <span className={`text-[9px] font-black uppercase tracking-[0.2em] mt-1 opacity-60 ${toast.type === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
-                {toast.type === 'success' ? 'عملية ناجحة' : 'تنبيه من النظام'}
-              </span>
+              <span className="text-sm font-black">{toast.message}</span>
             </div>
-            <button 
-              onClick={() => setToast(null)}
-              className={`group/close p-2.5 rounded-2xl transition-all duration-300 hover:scale-110 active:scale-90 ${
-                toast.type === 'success' 
-                  ? 'hover:bg-emerald-50 text-emerald-300 hover:text-emerald-600' 
-                  : 'hover:bg-red-50 text-red-300 hover:text-red-600'
-              }`}
-              title="إغلاق التنبيه"
-            >
-              <X className="w-5 h-5 transition-transform group-hover/close:rotate-90" />
+            <button onClick={() => setToast(null)} className="p-2 rounded-2xl hover:bg-gray-100">
+              <X className="w-4 h-4" />
             </button>
-            
-            {/* Animated Progress Bar */}
-            <div className="absolute bottom-0 left-4 right-4 h-1 bg-gray-100/50 rounded-full overflow-hidden">
-              <motion.div 
-                className={`h-full ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-red-500'} shadow-[0_0_10px_rgba(0,0,0,0.1)]`}
-                initial={{ width: '100%' }}
-                animate={{ width: '0%' }}
-                transition={{ duration: 4, ease: 'linear' }}
-              />
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-10 gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">نظام إدارة التنظيم السياسي</h1>
-          <p className="text-gray-500">لوحة التحكم الرئيسية لإدارة المنتمين والاستمارات</p>
+          <h1 className="text-4xl font-black text-gray-900 mb-2 flex items-center gap-3">
+            <ShieldCheck className="w-10 h-10 text-blue-600" />
+            نظام إدارة المنتمين
+          </h1>
+          <p className="text-gray-500 font-bold flex items-center gap-2">
+            <Activity className="w-4 h-4" />
+            لوحة تحكم الأداء التنظيمي والقاعدة البياناتية
+          </p>
         </div>
-        <button 
-          onClick={() => onAddMember()}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md flex items-center gap-2 transition-all transform hover:scale-105"
-        >
-          <UserPlus className="w-5 h-5" />
-          إضافة منتمي جديد
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button 
+            onClick={exportToExcel}
+            className="bg-white border-2 border-emerald-100 text-emerald-600 hover:bg-emerald-50 font-black py-4 px-6 rounded-2xl shadow-xl shadow-emerald-50 flex items-center gap-2 transition-all active:scale-95"
+          >
+            <Download className="w-5 h-5" />
+            تصدير Excel
+          </button>
+          <button 
+            onClick={() => onAddMember()}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-black py-4 px-8 rounded-2xl shadow-xl shadow-blue-100 flex items-center gap-2 transition-all transform hover:-translate-y-1 active:translate-y-0"
+          >
+            <UserPlus className="w-5 h-5" />
+            إضافة استمارة جديدة
+          </button>
+        </div>
       </div>
 
-      {/* Custom Confirmation Modal */}
-      {memberToDelete && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[150] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-4 mb-6 text-red-600">
-              <div className="bg-red-100 p-4 rounded-2xl shadow-inner shadow-red-200/50 animate-pulse">
-                <Trash2 className="w-10 h-10" />
-              </div>
-              <div>
-                <h3 className="text-2xl font-black">تأكيد الحذف</h3>
-                <p className="text-xs text-red-400 font-bold uppercase tracking-widest">إجراء غير قابل للتراجع</p>
-              </div>
-            </div>
-            
-            <p className="text-gray-600 mb-8 leading-relaxed">
-              هل أنت متأكد من حذف هذا المنتمي؟ سيتم حذف جميع بياناته وصوره نهائياً من النظام. لا يمكن التراجع عن هذا الإجراء.
-            </p>
-            
-            <div className="flex gap-3">
-              <button 
-                onClick={confirmDelete}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-red-200"
-              >
-                نعم، احذف الآن
-              </button>
-              <button 
-                onClick={() => setMemberToDelete(null)}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition-all active:scale-95"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center gap-4">
-          <div className="bg-blue-100 p-4 rounded-lg text-blue-600">
-            <Users className="w-8 h-8" />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center gap-5">
+          <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 overflow-hidden relative">
+            <Users className="w-8 h-8 relative z-10" />
+            <div className="absolute inset-0 bg-blue-600 opacity-0 group-hover:opacity-10 transition-opacity"></div>
           </div>
           <div>
-            <p className="text-gray-500 text-sm font-semibold">إجمالي المنتمين</p>
-            <p className="text-3xl font-bold text-gray-900">{members.length}</p>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">إجمالي المنتمين</p>
+            <p className="text-3xl font-black text-gray-900">{stats.total}</p>
           </div>
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center gap-4">
-          <div className="bg-emerald-100 p-4 rounded-lg text-emerald-600">
-            <FileText className="w-8 h-8" />
-          </div>
-          <div>
-            <p className="text-gray-500 text-sm font-semibold">الاستمارات المكتملة</p>
-            <p className="text-3xl font-bold text-gray-900">{members.length}</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center gap-4">
-          <div className="bg-purple-100 p-4 rounded-lg text-purple-600">
+        
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center gap-5">
+          <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
             <Activity className="w-8 h-8" />
           </div>
           <div>
-            <p className="text-gray-500 text-sm font-semibold">النشاط الأخير</p>
-            <p className="text-3xl font-bold text-gray-900">اليوم</p>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">المحافظات النشطة</p>
+            <p className="text-3xl font-black text-gray-900">{Object.keys(stats.byGovernorate).length}</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm lg:col-span-2 overflow-hidden relative">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">توزيع المنتمين حسب المحافظة</p>
+            <MapPin className="w-4 h-4 text-gray-200" />
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {Object.entries(stats.byGovernorate).map(([gov, count]) => (
+              <div key={gov} className="bg-gray-50 px-4 py-2 rounded-xl flex items-center gap-3 shrink-0 border border-gray-100">
+                <span className="font-bold text-gray-700">{gov}</span>
+                <span className="bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded-lg shadow-sm">{count}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Bulk Actions Bar */}
-      {selectedIds.size > 0 && (
-        <div className="mb-4 bg-blue-600 text-white p-4 rounded-xl shadow-lg flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="flex items-center gap-4">
-            <span className="bg-white text-blue-600 px-3 py-1 rounded-full text-sm font-bold">
-              {selectedIds.size} مختار
-            </span>
-            <span className="font-medium hidden sm:inline">تم تحديد عدد من المنتمين لإجراء عمليات جماعية</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={downloadCSV}
-              className="bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg shadow-emerald-900/20 hover:scale-105 active:scale-95"
-            >
-              <FileText className="w-4 h-4" />
-              تصدير CSV ({selectedIds.size})
-            </button>
-            <button 
-              onClick={() => {
-                if (window.confirm(`هل أنت متأكد من حذف ${selectedIds.size} منتمين؟`)) {
-                  setMembers(prevMembers => {
-                    const updated = prevMembers.filter(m => !selectedIds.has(m.id));
-                    localStorage.setItem('members_list', JSON.stringify(updated));
-                    return updated;
-                  });
-                  
-                  // Clean up localStorage for each deleted member
-                  selectedIds.forEach(id => {
-                    const keys = Object.keys(localStorage);
-                    keys.forEach(key => {
-                      if (key.includes(id)) localStorage.removeItem(key);
-                    });
-                  });
-                  
-                  const count = selectedIds.size;
-                  setSelectedIds(new Set());
-                  showToast(`تم حذف ${count} منتمين بنجاح`);
-                }
-              }}
-              className="bg-red-500 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 shadow-lg shadow-red-900/20 hover:scale-105 active:scale-95"
-            >
-              <Trash2 className="w-4 h-4" />
-              حذف المحدد ({selectedIds.size})
-            </button>
-            <button 
-              onClick={() => setSelectedIds(new Set())}
-              className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors"
-            >
-              إلغاء
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Search and Table Section */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-4 sm:p-6 border-b border-gray-200 bg-gray-50 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-800 flex items-center gap-2">
-            <Users className="w-5 h-5 sm:w-6 sm:h-6 text-gray-500" />
-            سجل المنتمين
-          </h2>
+      <div className="bg-white rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.03)] border border-gray-100 overflow-hidden">
+        <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex flex-col md:flex-row justify-between items-center gap-6">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-white rounded-2xl border border-gray-100 shadow-sm">
+              <Filter className="w-5 h-5 text-gray-400" />
+            </div>
+            <h2 className="text-xl font-black text-gray-800">قاعدة البيانات التنظيمية</h2>
+          </div>
           
-          <div className="relative w-full sm:w-96">
-            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
+          <div className="relative w-full md:w-96 group">
+            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none transition-colors group-focus-within:text-blue-600 text-gray-400">
+              <Search className="h-5 w-5" />
             </div>
             <input
               type="text"
-              className="block w-full pr-10 pl-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm transition-colors text-right"
+              className="block w-full pr-12 pl-4 py-4 border border-gray-100 rounded-2xl bg-white placeholder-gray-400 text-gray-900 focus:outline-none focus:ring-4 focus:ring-blue-50 focus:border-blue-200 text-sm font-bold shadow-sm transition-all text-right"
               placeholder="ابحث بالاسم، رقم الهاتف، أو المحافظة..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -403,151 +329,79 @@ export default function Home({ onAddMember }: HomeProps) {
           </div>
         </div>
 
-        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50/50">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent">
+          <table className="min-w-full divide-y divide-gray-100">
+            <thead className="bg-gray-50/10">
               <tr>
-                <th scope="col" className="px-4 sm:px-6 py-4 text-right border-b border-gray-100 w-10">
-                  <div className="flex items-center justify-center">
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer transition-all"
-                      checked={processedMembers.length > 0 && selectedIds.size === processedMembers.length}
-                      onChange={toggleSelectAll}
-                    />
-                  </div>
+                <th className="px-8 py-5 text-right w-10">
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 text-blue-600 border-gray-200 rounded-lg focus:ring-blue-500 cursor-pointer"
+                    checked={processedMembers.length > 0 && selectedIds.size === processedMembers.length}
+                    onChange={toggleSelectAll}
+                  />
                 </th>
-                <th 
-                  scope="col" 
-                  className="px-4 sm:px-6 py-4 text-right text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 cursor-pointer group select-none"
-                  onClick={() => handleSort('name')}
-                >
-                  <div className="flex items-center gap-2">
-                    الاسم الرباعي واللقب
-                    <SortIndicator column="name" />
-                  </div>
+                <th onClick={() => handleSort('name')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
+                  <div className="flex items-center gap-2">الاسم الرباعي <SortIndicator column="name" /></div>
                 </th>
-                <th 
-                  scope="col" 
-                  className="hidden sm:table-cell px-6 py-4 text-right text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 cursor-pointer group select-none"
-                  onClick={() => handleSort('phone')}
-                >
-                  <div className="flex items-center gap-2">
-                    رقم الهاتف
-                    <SortIndicator column="phone" />
-                  </div>
+                <th className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">الهاتف</th>
+                <th onClick={() => handleSort('governorate')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
+                  <div className="flex items-center gap-2">المحافظة <SortIndicator column="governorate" /></div>
                 </th>
-                <th 
-                  scope="col" 
-                  className="hidden md:table-cell px-6 py-4 text-right text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 cursor-pointer group select-none"
-                  onClick={() => handleSort('governorate')}
-                >
-                  <div className="flex items-center gap-2">
-                    المحافظة
-                    <SortIndicator column="governorate" />
-                  </div>
+                <th onClick={() => handleSort('dateAdded')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
+                  <div className="flex items-center gap-2">تاريخ الانضمام <SortIndicator column="dateAdded" /></div>
                 </th>
-                <th 
-                  scope="col" 
-                  className="hidden lg:table-cell px-6 py-4 text-right text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100 cursor-pointer group select-none"
-                  onClick={() => handleSort('dateAdded')}
-                >
-                  <div className="flex items-center gap-2">
-                    تاريخ الإضافة
-                    <SortIndicator column="dateAdded" />
-                  </div>
-                </th>
-                <th scope="col" className="px-4 sm:px-6 py-4 text-center text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-[0.2em] border-b border-gray-100">
-                  الإجراءات
-                </th>
+                <th className="px-8 py-5 text-center text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">الإجراءات</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="divide-y divide-gray-50">
               {processedMembers.length > 0 ? (
-                processedMembers.map((member, index) => (
-                  <tr 
-                    key={member.id} 
-                    onClick={(e) => toggleSelectMember(member.id, e)}
-                    className={`group hover:bg-blue-50/40 transition-all duration-200 cursor-pointer odd:bg-white even:bg-gray-50/50 ${selectedIds.has(member.id) ? 'bg-blue-50/60' : ''}`}
-                  >
-                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap border-r-4 border-transparent group-hover:border-blue-500 transition-all w-10">
-                      <div className="flex items-center justify-center">
-                        <input
-                          type="checkbox"
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer transition-all"
-                          checked={selectedIds.has(member.id)}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            toggleSelectMember(member.id, e as any);
-                          }}
-                        />
-                      </div>
+                processedMembers.map((member) => (
+                  <tr key={member.id} className={`group hover:bg-blue-50/20 transition-all ${selectedIds.has(member.id!) ? 'bg-blue-50/30' : ''}`}>
+                    <td className="px-8 py-5">
+                      <input
+                        type="checkbox"
+                        className="w-5 h-5 text-blue-600 border-gray-200 rounded-lg cursor-pointer"
+                        checked={selectedIds.has(member.id!)}
+                        onChange={(e) => toggleSelectMember(member.id!, e)}
+                      />
                     </td>
-                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 flex items-center justify-center text-xs sm:text-sm font-bold shrink-0 border border-blue-200 shadow-sm">
-                          {member.name ? member.name.charAt(0) : '?'}
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 flex items-center justify-center text-blue-600 font-black text-sm shadow-sm group-hover:scale-110 transition-transform">
+                          {(member.name || member.personalInformation?.fullName || '?').charAt(0)}
                         </div>
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-gray-900 truncate max-w-[140px] sm:max-w-xs">{member.name || 'بدون اسم'}</span>
-                            <span className="text-[10px] font-mono bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded border border-blue-100/50">
-                              {member.id}
-                            </span>
-                          </div>
-                          <span className="sm:hidden text-[10px] text-gray-500 mt-0.5 font-medium" dir="ltr">{member.phone}</span>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-black text-gray-900">{member.name || member.personalInformation?.fullName || 'بدون اسم'}</span>
+                          <span className="text-[10px] font-bold text-blue-500 uppercase tracking-tighter">ID: {member.id?.slice(-6)}</span>
                         </div>
                       </div>
                     </td>
-                    <td className="hidden sm:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-medium">
-                      <span dir="ltr" className="bg-gray-100 px-2 py-1 rounded text-xs">{member.phone || '---'}</span>
+                    <td className="px-6 py-5 text-sm font-bold text-gray-600" dir="ltr">{member.phone || member.housingInformation?.phone || '---'}</td>
+                    <td className="px-6 py-5">
+                      <span className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-xl text-xs font-black border border-emerald-100">
+                        {member.governorate || member.housingInformation?.governorate || '---'}
+                      </span>
                     </td>
-                    <td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                        {member.governorate || '---'}
-                      </div>
-                    </td>
-                    <td className="hidden lg:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <span className="text-xs bg-gray-50 border border-gray-100 px-2 py-1 rounded">{member.dateAdded}</span>
-                    </td>
-                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-center text-sm font-medium" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-center gap-2">
-                        <motion.button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAddMember(member.id);
-                          }}
-                          whileHover={{ scale: 1.1, backgroundColor: '#eff6ff' }}
-                          whileTap={{ scale: 0.9 }}
-                          className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 bg-blue-50/50 px-3.5 py-2 rounded-xl transition-colors border border-blue-100 hover:border-blue-300 shadow-sm hover:shadow-md group/edit"
-                          title="تعديل بيانات المنتمي"
-                        >
-                          <Edit className="w-4 h-4 transition-transform group-hover/edit:-rotate-12 group-hover/edit:scale-110" />
-                          <span className="hidden sm:inline font-black text-xs uppercase tracking-wider">تعديل</span>
-                        </motion.button>
-                        <motion.button 
-                          onClick={(e) => deleteMember(member.id, e)}
-                          whileHover={{ scale: 1.1, backgroundColor: '#fef2f2' }}
-                          whileTap={{ scale: 0.9 }}
-                          className="inline-flex items-center gap-1.5 text-red-500 hover:text-red-700 bg-red-50/50 px-3.5 py-2 rounded-xl transition-colors border border-red-100 hover:border-red-300 shadow-sm hover:shadow-md group/del"
-                          title="حذف هذا المنتمي نهائياً من النظام"
-                        >
-                          <Trash2 className="w-4 h-4 transition-transform group-hover/del:rotate-12 group-hover/del:scale-110" />
-                          <span className="hidden sm:inline font-black text-xs uppercase tracking-wider">حذف</span>
-                        </motion.button>
+                    <td className="px-6 py-5 text-xs text-gray-400 font-bold">{member.dateAdded}</td>
+                    <td className="px-8 py-5">
+                      <div className="flex justify-center gap-3">
+                        <button onClick={() => onAddMember(member.id)} className="p-3 bg-white border border-gray-100 rounded-2xl text-blue-500 hover:bg-blue-600 hover:text-white hover:border-blue-600 hover:shadow-lg hover:shadow-blue-100 transition-all active:scale-90">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button onClick={(e) => deleteMember(member.id!, e)} className="p-3 bg-white border border-gray-100 rounded-2xl text-red-400 hover:bg-red-500 hover:text-white hover:border-red-500 hover:shadow-lg hover:shadow-red-100 transition-all active:scale-90">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 ))
               ) : (
-                /* Empty State */
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
-                    <div className="flex flex-col items-center justify-center text-gray-500">
-                      <FileText className="w-12 h-12 mb-4 text-gray-300" />
-                      <p className="text-lg font-medium text-gray-900 mb-1">لا يوجد منتمين</p>
-                      <p className="text-sm">ابدأ بإضافة أول منتمي للنظام.</p>
+                  <td colSpan={6} className="px-6 py-24 text-center">
+                    <div className="flex flex-col items-center gap-4 opacity-30">
+                      <Users className="w-20 h-20" />
+                      <p className="text-xl font-black">لا توجد بيانات مطابقة للبحث</p>
                     </div>
                   </td>
                 </tr>
@@ -556,6 +410,26 @@ export default function Home({ onAddMember }: HomeProps) {
           </table>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {memberToDelete && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[300] flex items-center justify-center p-6 animate-in fade-in">
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-[2.5rem] shadow-2xl max-w-md w-full p-10 border border-gray-100">
+            <div className="flex items-center gap-6 mb-8 text-red-600">
+              <div className="bg-red-50 p-5 rounded-3xl shadow-inner"><Trash2 className="w-10 h-10" /></div>
+              <div>
+                <h3 className="text-2xl font-black tracking-tight">تأكيد حذف المنتمي</h3>
+                <p className="text-[10px] font-black uppercase text-red-400 tracking-widest mt-1">إجراء غير قابل للتراجع</p>
+              </div>
+            </div>
+            <p className="text-gray-500 font-bold leading-relaxed mb-10">سيتم حذف كافة بيانات المنتمي وصوره من قاعدة البيانات السحابية (Firestore) بشكل نهائي. هل تريد المتابعة؟</p>
+            <div className="flex gap-4">
+              <button onClick={confirmDelete} className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-red-100 transition-all active:scale-95">حذف نهائي</button>
+              <button onClick={() => setMemberToDelete(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black py-4 rounded-2xl transition-all">إلغاء</button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

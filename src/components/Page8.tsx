@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Plus, Image as ImageIcon, X, Loader2, Crop, Check, RotateCcw, Eye, Maximize2 } from 'lucide-react';
 import Cropper from 'react-easy-crop';
 import { motion, AnimatePresence } from 'motion/react';
+import { storageService } from '../services/storageService';
 
 // Full Image Modal Component
 const FullImageModal = ({ isOpen, image, onClose, label }: { isOpen: boolean; image: string | null; onClose: () => void; label: string }) => {
@@ -206,18 +207,44 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
     setCroppedAreaPixels(croppedAreaPixels);
   }, []);
 
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      processFile(file);
+    }
+  };
+
   const handleCropSave = async () => {
     if (tempImage && croppedAreaPixels) {
       try {
+        setUploadProgress(10);
         const croppedImage = await getCroppedImg(tempImage, croppedAreaPixels);
-        setImage(croppedImage);
+        
+        // Convert base64 to Blob for Firebase Storage upload
+        const response = await fetch(croppedImage);
+        const blob = await response.blob();
+        
+        const parts = storageKey.split('_');
+        const mId = parts[1];
+        const section = parts[3];
+        const imgId = parts[4];
+
+        setUploadProgress(40);
+        const url = await storageService.uploadMemberImage(mId, `${section}_${imgId}`, blob as File);
+        
+        setImage(url);
         setIsCropping(false);
         setTempImage(null);
-        localStorage.setItem(storageKey, croppedImage);
-        if (showToast) showToast('تم قص الصورة وحفظها بنجاح', 'success');
+        setUploadProgress(100);
+        
+        localStorage.setItem(storageKey, url);
+        if (showToast) showToast('تم رفع الصورة بنجاح إلى السحابة', 'success');
+        
+        setTimeout(() => setUploadProgress(0), 1000);
       } catch (e) {
         console.error(e);
-        if (showToast) showToast('فشل قص الصورة', 'error');
+        setUploadProgress(0);
+        if (showToast) showToast('فشل في رفع الصورة. تأكد من اتصالك بالإنترنت.', 'error');
       }
     }
   };
@@ -308,12 +335,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
     reader.readAsDataURL(file);
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      processFile(e.target.files[0]);
-    }
-  };
-
   const handleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value.replace(/\D/g, ''); // Only allow numbers
     const trimmedId = newId.trim();
@@ -321,12 +342,10 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
     setCustomId(newId);
 
     if (trimmedId !== '') {
-      // Extract member prefix to check uniqueness within the same member's context
       const memberPrefix = storageKey.split('_img_')[0];
       const allKeys = Object.keys(localStorage);
 
       const isDuplicate = allKeys.some(key => {
-        // Check other ID keys for the same member
         if (key.startsWith(memberPrefix) && key.endsWith('_id') && key !== (storageKey + '_id')) {
           const storedValue = localStorage.getItem(key);
           return storedValue && storedValue.trim() === trimmedId;
@@ -385,14 +404,12 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        title="انقر أو اسحب الصورة هنا لرفعها. سيتم حفظها تلقائياً في الذاكرة المحلية."
+        title="انقر أو اسحب الصورة هنا لرفعها. سيتم حفظها تلقائياً."
       >
-        {/* Background Pattern */}
         {!image && !isDragging && (
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(#3b82f6_1px,transparent_1px)] [background-size:16px_16px]"></div>
         )}
 
-        {/* Drag Overlay Message */}
         {isDragging && (
           <div className="absolute inset-0 z-20 bg-blue-600/5 flex flex-col items-center justify-center rounded-lg pointer-events-none backdrop-blur-[2px]">
             <div className="bg-blue-600 text-white px-6 py-3 rounded-full text-sm font-bold shadow-2xl animate-bounce flex items-center gap-2">
@@ -402,7 +419,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
           </div>
         )}
 
-        {/* Progress Overlay */}
         {uploadProgress > 0 && (
           <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center rounded-lg">
             <div className="relative">
@@ -417,7 +433,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
-            <span className="text-xs font-bold text-blue-700 mt-3 tracking-widest uppercase">جاري المعالجة</span>
+            <span className="text-xs font-bold text-blue-700 mt-3 tracking-widest uppercase">جاري الرفع</span>
           </div>
         )}
 
@@ -426,23 +442,13 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
             <img
               src={image}
               alt={displayLabel}
-              className="max-w-full max-h-full object-contain rounded-lg shadow-sm transition-transform duration-500 group-hover/img:scale-[1.02] print:rounded-none print:w-auto print:h-auto"
+              className="max-w-full max-h-full object-contain rounded-lg shadow-sm transition-transform duration-500 group-hover/img:scale-[1.02] print:rounded-none"
             />
-            {/* Discreet Delete Button - Always visible but subtle */}
-            <button
-              type="button"
-              onClick={handleRemove}
-              className="absolute top-2 left-2 p-1.5 bg-white/20 hover:bg-red-500 text-white/40 hover:text-white rounded-lg backdrop-blur-md transition-all no-print border border-white/10 hover:border-red-400 z-10 sm:flex hidden items-center justify-center"
-              title="حذف الصورة"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity duration-300 flex items-center justify-center gap-3 no-print rounded-lg">
               <button
                 type="button"
                 onClick={() => setIsPreviewOpen(true)}
                 className="bg-white text-gray-900 p-3 rounded-full shadow-2xl transition-all hover:scale-110 active:scale-90"
-                title="عرض الصورة كاملة"
               >
                 <Maximize2 className="w-5 h-5" />
               </button>
@@ -453,7 +459,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                   setIsCropping(true);
                 }}
                 className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-2xl transition-all hover:scale-110 active:scale-90"
-                title="قص الصورة"
               >
                 <Crop className="w-5 h-5" />
               </button>
@@ -461,18 +466,10 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                 type="button"
                 onClick={handleRemove}
                 className="bg-red-500 hover:bg-red-600 text-white p-3 rounded-full shadow-2xl transition-all hover:scale-110 active:scale-90"
-                title="حذف الصورة"
               >
                 <Trash2 className="w-5 h-5" />
               </button>
             </div>
-            <button
-              type="button"
-              onClick={handleRemove}
-              className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600 text-white p-1.5 rounded-full shadow-lg no-print z-10 transition-all sm:hidden"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center p-4">
@@ -498,7 +495,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
         )}
       </div>
 
-      {/* Custom ID Input */}
       <div className="no-print flex flex-col gap-1.5 px-2 py-1 bg-gray-50/50 rounded-lg border border-gray-100 transition-colors focus-within:border-blue-200 focus-within:bg-blue-50/30">
         <div className="flex items-center gap-3">
           <label className="text-[9px] font-black text-gray-400 whitespace-nowrap uppercase tracking-[0.15em]">المعرف الرقمي</label>
@@ -512,12 +508,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
         </div>
         {error && <span className="text-[9px] text-red-500 font-black animate-pulse">{error}</span>}
       </div>
-      {/* Print version of ID */}
-      <div className="hidden print:block text-[10px] text-center font-mono mt-1 border-t border-gray-100 pt-1">
-        ID: {customId || '---'}
-      </div>
 
-      {/* Full Image Preview Modal */}
       <FullImageModal
         isOpen={isPreviewOpen}
         image={image}
@@ -525,7 +516,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
         label={displayLabel + (customId ? ` - ${customId}` : '')}
       />
 
-      {/* Cropping Modal */}
       {isCropping && tempImage && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="bg-white rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
@@ -536,11 +526,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                 </div>
                 <div>
                   <h3 className="text-xl font-black text-gray-900">تعديل وقص الصورة</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">قم بضبط الإطار للحصول على أفضل نتيجة</p>
-                    <span className="h-1 w-1 rounded-full bg-gray-300"></span>
-                    <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-black uppercase tracking-tighter">4:3 Aspect Ratio</span>
-                  </div>
                 </div>
               </div>
               <button
@@ -562,20 +547,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                 onZoomChange={setZoom}
                 showGrid={true}
               />
-              {/* Zoom Level Overlay */}
-              <div className="absolute bottom-4 left-4 z-10 bg-black/50 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-2 border border-white/10">
-                <ImageIcon className="w-3 h-3" />
-                <span>Zoom: {Math.round(zoom * 100)}%</span>
-              </div>
             </div>
 
             <div className="p-8 bg-white border-t border-gray-100">
               <div className="flex flex-col gap-6">
                 <div className="flex items-center gap-6">
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <span className="text-xs font-black text-gray-400 uppercase tracking-widest">التكبير</span>
-                    <span className="text-[10px] font-bold text-blue-500">{Math.round(zoom * 100)}%</span>
-                  </div>
                   <input
                     type="range"
                     value={zoom}
@@ -586,18 +562,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                     onChange={(e) => setZoom(Number(e.target.value))}
                     className="flex-1 h-2 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setZoom(1)}
-                      className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-blue-600 transition-all"
-                      title="إعادة تعيين التكبير"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-                    <div className="w-12 text-center font-mono font-bold text-blue-600 bg-blue-50 py-1 rounded-lg border border-blue-100">
-                      {zoom.toFixed(1)}x
-                    </div>
-                  </div>
                 </div>
 
                 <div className="flex gap-4">
@@ -606,13 +570,12 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ storageKey, displayLabel, sho
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-200 transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
                     <Check className="w-6 h-6" />
-                    حفظ التعديلات
+                    حفظ ورفع
                   </button>
                   <button
                     onClick={handleCropCancel}
                     className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black py-4 rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
                   >
-                    <RotateCcw className="w-6 h-6" />
                     إلغاء
                   </button>
                 </div>
@@ -647,29 +610,6 @@ export default function Page8({ customIds, setCustomIds, memberId, showToast }: 
     if (window.confirm('هل أنت متأكد من حذف هذه الهوية وجميع الصور المرتبطة بها؟')) {
       const updatedIds = customIds.filter(c => c.id !== id);
       setCustomIds(updatedIds);
-
-      // Clean up storage
-      const imageListKey = `memberForm_${memberId}_custom_${id}_images`;
-      const savedImages = localStorage.getItem(imageListKey);
-      if (savedImages) {
-        try {
-          const imageIds = JSON.parse(savedImages);
-          imageIds.forEach((imgId: string) => {
-            localStorage.removeItem(`memberForm_${memberId}_img_${id}_${imgId}`);
-            localStorage.removeItem(`memberForm_${memberId}_img_${id}_${imgId}_id`);
-          });
-        } catch (e) { }
-      }
-      localStorage.removeItem(imageListKey);
-
-      localStorage.removeItem(`memberForm_${memberId}_img_${id}_front`);
-      localStorage.removeItem(`memberForm_${memberId}_img_${id}_back`);
-      localStorage.removeItem(`memberForm_${memberId}_img_${id}_front_id`);
-      localStorage.removeItem(`memberForm_${memberId}_img_${id}_back_id`);
-
-      // Force update the parent state immediately
-      localStorage.setItem(`memberFormCustomIds_${memberId}`, JSON.stringify(updatedIds));
-
       if (showToast) showToast('تم حذف الهوية الإضافية بنجاح', 'success');
     }
   };
@@ -677,108 +617,45 @@ export default function Page8({ customIds, setCustomIds, memberId, showToast }: 
   return (
     <div className="border-4 border-double border-gray-800 p-2 mb-8 print-page-break print-break-inside-avoid bg-white">
       <div className="border border-black p-4 min-h-[1000px] relative">
-
         <div className="mb-2 mt-8">
           <div className="inline-block border border-dashed border-black px-4 py-1 font-bold text-lg mb-2">
             المستمسكات الثبوتية
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8 pb-16 print:block print:space-y-12">
-          {/* Fixed IDs */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8 pb-16 print:block">
           <div className="space-y-10 lg:col-span-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 space-y-0 print:block print:space-y-10">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md print:border-none print:p-0 print:shadow-none">
-              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg shadow-lg shadow-blue-100 print:bg-blue-300 print:text-black print:border print:border-black print:shadow-none">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse print:hidden"></div>
-                  <h3 className="font-black text-sm">البطاقة الوطنية</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('هل أنت متأكد من حذف جميع بيانات البطاقة الوطنية؟')) {
-                      localStorage.removeItem(`memberForm_${memberId}_img_national_front`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_national_back`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_national_front_id`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_national_back_id`);
-                      window.dispatchEvent(new CustomEvent('clearSection', { detail: { section: 'national' } }));
-                      if (showToast) showToast('تم حذف بيانات البطاقة الوطنية بنجاح');
-                    }
-                  }}
-                  className="no-print p-1 hover:bg-white/20 rounded-lg transition-colors text-white/50 hover:text-white"
-                  title="حذف بيانات القسم"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md">
+              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg">
+                <h3 className="font-black text-sm">البطاقة الوطنية</h3>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <ImageUpload storageKey={`memberForm_${memberId}_img_national_front`} displayLabel="الوجه الأمامي" showToast={showToast} />
                 <ImageUpload storageKey={`memberForm_${memberId}_img_national_back`} displayLabel="الوجه الخلفي" showToast={showToast} />
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md print:border-none print:p-0 print:shadow-none">
-              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg shadow-lg shadow-blue-100 print:bg-blue-300 print:text-black print:border print:border-black print:shadow-none">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse print:hidden"></div>
-                  <h3 className="font-black text-sm">بطاقة السكن</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('هل أنت متأكد من حذف جميع بيانات بطاقة السكن؟')) {
-                      localStorage.removeItem(`memberForm_${memberId}_img_residence_front`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_residence_back`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_residence_front_id`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_residence_back_id`);
-                      window.dispatchEvent(new CustomEvent('clearSection', { detail: { section: 'residence' } }));
-                      if (showToast) showToast('تم حذف بيانات بطاقة السكن بنجاح');
-                    }
-                  }}
-                  className="no-print p-1 hover:bg-white/20 rounded-lg transition-colors text-white/50 hover:text-white"
-                  title="حذف بيانات القسم"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md">
+              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg">
+                <h3 className="font-black text-sm">بطاقة السكن</h3>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <ImageUpload storageKey={`memberForm_${memberId}_img_residence_front`} displayLabel="الوجه الأمامي" showToast={showToast} />
                 <ImageUpload storageKey={`memberForm_${memberId}_img_residence_back`} displayLabel="الوجه الخلفي" showToast={showToast} />
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md print:border-none print:p-0 print:shadow-none">
-              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg shadow-lg shadow-blue-100 print:bg-blue-300 print:text-black print:border print:border-black print:shadow-none">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse print:hidden"></div>
-                  <h3 className="font-black text-sm">بطاقة الناخب</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('هل أنت متأكد من حذف جميع بيانات بطاقة الناخب؟')) {
-                      localStorage.removeItem(`memberForm_${memberId}_img_voter_front`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_voter_back`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_voter_front_id`);
-                      localStorage.removeItem(`memberForm_${memberId}_img_voter_back_id`);
-                      window.dispatchEvent(new CustomEvent('clearSection', { detail: { section: 'voter' } }));
-                      if (showToast) showToast('تم حذف بيانات بطاقة الناخب بنجاح');
-                    }
-                  }}
-                  className="no-print p-1 hover:bg-white/20 rounded-lg transition-colors text-white/50 hover:text-white"
-                  title="حذف بيانات القسم"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 transition-all hover:shadow-md">
+              <div className="flex justify-between items-center mb-5 bg-blue-600 text-white py-2 px-4 rounded-lg">
+                <h3 className="font-black text-sm">بطاقة الناخب</h3>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <ImageUpload storageKey={`memberForm_${memberId}_img_voter_front`} displayLabel="الوجه الأمامي" showToast={showToast} />
                 <ImageUpload storageKey={`memberForm_${memberId}_img_voter_back`} displayLabel="الوجه الخلفي" showToast={showToast} />
               </div>
             </div>
           </div>
 
-          {/* Dynamic Custom IDs */}
           {customIds.map((custom, index) => (
             <CustomIDCard
               key={custom.id}
@@ -791,7 +668,6 @@ export default function Page8({ customIds, setCustomIds, memberId, showToast }: 
             />
           ))}
 
-          {/* Add Button - Full Width on Grid */}
           <div className="no-print flex justify-center pt-6 lg:col-span-2">
             <button
               type="button"
@@ -799,15 +675,9 @@ export default function Page8({ customIds, setCustomIds, memberId, showToast }: 
               className="group flex items-center gap-3 bg-blue-600 text-white px-10 py-5 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-1 active:translate-y-0"
             >
               <Plus className="w-6 h-6" />
-              إضافة هوية أو مستمسك إضافي جديد
+              إضافة مسمسك إضافي جديد
             </button>
           </div>
-
-        </div>
-
-        {/* Page Number */}
-        <div className="absolute bottom-4 left-0 right-0 text-center font-bold">
-          (8)
         </div>
       </div>
     </div>

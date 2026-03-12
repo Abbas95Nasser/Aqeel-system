@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "amwali-iq"
+  },
+  "targets": {
+    "amwali-iq": {
+      "hosting": {
+        "aqeel": [
+          "aqeel-system"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
