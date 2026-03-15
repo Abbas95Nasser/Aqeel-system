@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, Users, FileText, Activity, Edit, Trash2, ChevronUp, ChevronDown, ArrowUpDown, CheckCircle, AlertCircle, X, Loader2, Download, Filter, MapPin, ShieldCheck } from 'lucide-react';
+import { Search, UserPlus, Users, FileText, Activity, Edit, Trash2, ChevronUp, ChevronDown, ArrowUpDown, CheckCircle, AlertCircle, X, Loader2, Download, Filter, MapPin, ShieldCheck, FileDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { memberService } from '../services/memberService';
 import { Member } from '../types';
 import * as XLSX from 'xlsx';
+import html2pdf from 'html2pdf.js';
 
 interface HomeProps {
   onAddMember: (memberId?: string) => void;
@@ -20,10 +21,12 @@ export default function Home({ onAddMember }: HomeProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const [memberToDelete, setMemberToDelete] = useState<string | null>(null);
+
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; order: SortOrder }>({
     key: 'dateAdded',
     order: 'desc'
   });
+
   const [stats, setStats] = useState<{ total: number; byGovernorate: Record<string, number> }>({
     total: 0,
     byGovernorate: {}
@@ -38,12 +41,13 @@ export default function Home({ onAddMember }: HomeProps) {
     try {
       const allMembers = await memberService.getAllMembers();
       setMembers(allMembers);
-      
+
       const dashboardStats = await memberService.getStats();
       setStats({
         total: dashboardStats.total,
         byGovernorate: dashboardStats.byGovernorate
       });
+
     } catch (err: any) {
       console.error('Failed to fetch data:', err);
       showToast(`خطأ في تحميل البيانات من قاعدة البيانات: ${err.code || err.message}`, 'error');
@@ -64,8 +68,8 @@ export default function Home({ onAddMember }: HomeProps) {
 
   const confirmDelete = async () => {
     if (!memberToDelete) return;
-    
     const id = memberToDelete;
+
     try {
       await memberService.deleteMember(id);
       setMembers(prev => prev.filter(m => m.id !== id));
@@ -87,35 +91,41 @@ export default function Home({ onAddMember }: HomeProps) {
   const handleSort = (key: SortKey) => {
     setSortConfig(prev => ({
       key,
-      order: prev.key === key ? (prev.order === 'asc' ? 'desc' : prev.order === 'desc' ? null : 'asc') : 'asc'
+      order: prev.key === key
+        ? (prev.order === 'asc' ? 'desc' : prev.order === 'desc' ? null : 'asc')
+        : 'asc'
     }));
   };
 
   const processedMembers = members
-    .filter(member => 
-      (member.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (member.phone || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (member.governorate || '').toLowerCase().includes(searchQuery.toLowerCase())
-    )
+    .filter(member => {
+      const name = (member.name || member.personalInformation?.fullName || '').toLowerCase();
+      const phone = (member.phone || member.housingInformation?.phone || '').toLowerCase();
+      const governorate = (member.governorate || member.housingInformation?.governorate || '').toLowerCase();
+      const search = searchQuery.toLowerCase();
+      
+      return name.includes(search) || phone.includes(search) || governorate.includes(search);
+    })
     .sort((a, b) => {
       if (!sortConfig.key || !sortConfig.order) return 0;
-      
-      let valA: any = (a as any)[sortConfig.key] || '';
-      let valB: any = (b as any)[sortConfig.key] || '';
-      
+
+      let valA: any = (sortConfig.key === 'name' ? (a.name || a.personalInformation?.fullName) : (a as any)[sortConfig.key]) || '';
+      let valB: any = (sortConfig.key === 'name' ? (b.name || b.personalInformation?.fullName) : (b as any)[sortConfig.key]) || '';
+
       if (sortConfig.key === 'dateAdded') {
         valA = a.timestamp || 0;
         valB = b.timestamp || 0;
       } else {
         if (typeof valA === 'string' && typeof valB === 'string') {
-          return sortConfig.order === 'asc' 
-            ? valA.localeCompare(valB, 'ar') 
+          return sortConfig.order === 'asc'
+            ? valA.localeCompare(valB, 'ar')
             : valB.localeCompare(valA, 'ar');
         }
       }
 
       if (valA < valB) return sortConfig.order === 'asc' ? -1 : 1;
       if (valA > valB) return sortConfig.order === 'asc' ? 1 : -1;
+
       return 0;
     });
 
@@ -141,7 +151,7 @@ export default function Home({ onAddMember }: HomeProps) {
   const exportToExcel = () => {
     const selectedMembers = members.filter(m => selectedIds.has(m.id as string));
     const dataToExport = selectedMembers.length > 0 ? selectedMembers : processedMembers;
-    
+
     if (dataToExport.length === 0) {
       showToast('لا توجد بيانات لتصديرها', 'error');
       return;
@@ -152,51 +162,126 @@ export default function Home({ onAddMember }: HomeProps) {
       'الاسم الكامل': m.name || m.personalInformation?.fullName,
       'الهاتف': m.phone || m.housingInformation?.phone,
       'المحافظة': m.governorate || m.housingInformation?.governorate,
-      'تاريخ الإضافة': m.dateAdded
+      'تاريخ الإضافة': m.dateAdded,
+      // Personal Info
+      'الأب': m.personalInformation?.fatherName || '',
+      'الأم': m.personalInformation?.motherName || '',
+      'سنة الولادة': m.personalInformation?.birthYear || '',
+      'الجنسية': m.personalInformation?.nationality || '',
+      'القومية': m.personalInformation?.ethnicity || '',
+      'الطول': m.personalInformation?.height || '',
+      'الوزن': m.personalInformation?.weight || '',
+      'الحالة الصحية': m.personalInformation?.healthStatus || '',
+      'ملاحظات صحية': m.personalInformation?.healthNotes || '',
+      'الحالة الاجتماعية': m.personalInformation?.socialStatus || '',
+      // Housing Info
+      'محافظة السكن': m.housingInformation?.governorate || '',
+      'القضاء': m.housingInformation?.district || '',
+      'المحلة': m.housingInformation?.neighborhood || '',
+      'زقاق': m.housingInformation?.zukaq || '',
+      'دار': m.housingInformation?.dar || '',
+      'أقرب نقطة دالة': m.housingInformation?.nearestLandmark || '',
+      // Previous Housing
+      'المحافظة السابقة': m.previousHousing?.governorate || '',
+      'القضاء السابق': m.previousHousing?.district || '',
+      // Family Info
+      'عدد الأفراد': m.familyInformation?.totalMembers || '',
+      'الذكور': m.familyInformation?.males || '',
+      'الإناث': m.familyInformation?.females || '',
+      'عدد الزوجات': m.familyInformation?.wivesCount || '',
+      // Education Info
+      'المستوى العلمي': m.educationInformation?.level || '',
+      'سنة التخرج': m.educationInformation?.graduationYear || '',
+      'المؤسسة التعليمية': m.educationInformation?.institution || '',
+      'التخصص': m.educationInformation?.specialization || '',
+      // Work Info
+      'حالة الدخل': m.workInformation?.incomeStatus || '',
+      'هل يعمل؟': m.workInformation?.isWorking ? 'نعم' : 'لا',
+      'الدائرة/الجهة': m.workInformation?.details?.government || m.workInformation?.details?.private || '',
+      'العنوان الوظيفي': m.workInformation?.details?.jobTitle || '',
+      'تاريخ المباشرة': m.workInformation?.details?.startDate || '',
+      'الراتب الشهري': m.workInformation?.details?.monthlyIncome || ''
     })));
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "المنتمين");
-    
     XLSX.writeFile(workbook, `Aqeel_System_Members_${new Date().toISOString().split('T')[0]}.xlsx`);
     showToast(`تم تصدير ${dataToExport.length} سجل بنجاح`);
   };
 
-  const downloadCSV = () => {
+  const exportToPDF = () => {
     const selectedMembers = members.filter(m => selectedIds.has(m.id as string));
     const dataToExport = selectedMembers.length > 0 ? selectedMembers : processedMembers;
-    
-    if (dataToExport.length === 0) return;
 
-    const headers = ['المعرف', 'الاسم', 'الهاتف', 'المحافظة', 'تاريخ الإضافة'];
-    const rows = dataToExport.map(m => [
-      m.id || '',
-      m.name || m.personalInformation?.fullName || '',
-      m.phone || m.housingInformation?.phone || '',
-      m.governorate || m.housingInformation?.governorate || '',
-      m.dateAdded || ''
-    ]);
+    if (dataToExport.length === 0) {
+      showToast('لا توجد بيانات لتصديرها', 'error');
+      return;
+    }
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
+    // Create a temporary element for PDF generation to ensure a clean look
+    const printElement = document.createElement('div');
+    printElement.dir = 'rtl';
+    printElement.className = 'pdf-export-container p-8 font-serif';
+    printElement.innerHTML = `
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h1 style="font-size: 24px; font-weight: bold; color: #111827;">نظام إدارة المنتمين - تقرير البيانات</h1>
+        <p style="color: #6B7280; font-weight: bold;">تاريخ التقرير: ${new Date().toLocaleDateString('ar-EG')}</p>
+        <p style="color: #6B7280; font-size: 12px;">عدد السجلات: ${dataToExport.length}</p>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+        <thead>
+          <tr style="background-color: #F9FAFB; border-bottom: 2px solid #E5E7EB;">
+            <th style="padding: 12px; text-align: right; font-size: 12px; color: #374151; font-weight: 800;">المعرف</th>
+            <th style="padding: 12px; text-align: right; font-size: 12px; color: #374151; font-weight: 800;">الاسم الكامل</th>
+            <th style="padding: 12px; text-align: right; font-size: 12px; color: #374151; font-weight: 800;">الهاتف</th>
+            <th style="padding: 12px; text-align: right; font-size: 12px; color: #374151; font-weight: 800;">المحافظة</th>
+            <th style="padding: 12px; text-align: right; font-size: 12px; color: #374151; font-weight: 800;">تاريخ الانضمام</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dataToExport.map(m => `
+            <tr style="border-bottom: 1px solid #F3F4F6;">
+              <td style="padding: 12px; text-align: right; font-size: 11px; color: #6B7280;">${m.id}</td>
+              <td style="padding: 12px; text-align: right; font-size: 12px; font-weight: bold; color: #111827;">${m.name || m.personalInformation?.fullName}</td>
+              <td style="padding: 12px; text-align: right; font-size: 11px; color: #4B5563;">${m.phone || m.housingInformation?.phone || '---'}</td>
+              <td style="padding: 12px; text-align: right; font-size: 11px; color: #059669;">${m.governorate || m.housingInformation?.governorate || '---'}</td>
+              <td style="padding: 12px; text-align: right; font-size: 10px; color: #9CA3AF;">${m.dateAdded}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top: 40px; text-align: left; font-size: 10px; color: #9CA3AF;">
+        تم إنشاء هذا التقرير تلقائياً بواسطة نظام العقيل لإدارة المنتمين
+      </div>
+    `;
 
-    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Aqeel_System_Members_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast(`تم تصدير ${dataToExport.length} سجل بنجاح`);
+    const opt: any = {
+      margin: 10,
+      filename: `Aqeel_System_Members_${new Date().toISOString().split('T')[0]}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+    };
+
+    showToast('جاري تصدير ملف PDF...');
+    html2pdf().set(opt).from(printElement).save().then(() => {
+      showToast('تم تصدير ملف PDF بنجاح');
+    }).catch((err: any) => {
+      console.error('PDF Export failed:', err);
+      showToast('فشل تصدير ملف PDF. يرجى المحاولة مرة أخرى.', 'error');
+    });
   };
 
   const SortIndicator = ({ column }: { column: SortKey }) => {
-    if (sortConfig.key !== column) return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
-    if (sortConfig.order === 'asc') return <ChevronUp className="w-3 h-3 text-blue-600" />;
-    if (sortConfig.order === 'desc') return <ChevronDown className="w-3 h-3 text-blue-600" />;
+    if (sortConfig.key !== column)
+      return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
+
+    if (sortConfig.order === 'asc')
+      return <ChevronUp className="w-3 h-3 text-blue-600" />;
+
+    if (sortConfig.order === 'desc')
+      return <ChevronDown className="w-3 h-3 text-blue-600" />;
+
     return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
   };
 
@@ -212,9 +297,9 @@ export default function Home({ onAddMember }: HomeProps) {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 relative">
       {/* Toast Notification */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {toast && (
-          <motion.div 
+          <motion.div
             layout
             initial={{ opacity: 0, y: -40, x: '-50%', scale: 0.8, filter: 'blur(10px)' }}
             animate={{ opacity: 1, y: 0, x: '-50%', scale: 1, filter: 'blur(0px)' }}
@@ -249,14 +334,21 @@ export default function Home({ onAddMember }: HomeProps) {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <button 
+          <button
             onClick={exportToExcel}
             className="bg-white border-2 border-emerald-100 text-emerald-600 hover:bg-emerald-50 font-black py-4 px-6 rounded-2xl shadow-xl shadow-emerald-50 flex items-center gap-2 transition-all active:scale-95"
           >
             <Download className="w-5 h-5" />
             تصدير Excel
           </button>
-          <button 
+          <button
+            onClick={exportToPDF}
+            className="bg-white border-2 border-blue-100 text-blue-600 hover:bg-blue-50 font-black py-4 px-6 rounded-2xl shadow-xl shadow-blue-50 flex items-center gap-2 transition-all active:scale-95"
+          >
+            <FileDown className="w-5 h-5" />
+            تصدير PDF
+          </button>
+          <button
             onClick={() => onAddMember()}
             className="bg-blue-600 hover:bg-blue-700 text-white font-black py-4 px-8 rounded-2xl shadow-xl shadow-blue-100 flex items-center gap-2 transition-all transform hover:-translate-y-1 active:translate-y-0"
           >
@@ -271,14 +363,12 @@ export default function Home({ onAddMember }: HomeProps) {
         <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center gap-5">
           <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 overflow-hidden relative">
             <Users className="w-8 h-8 relative z-10" />
-            <div className="absolute inset-0 bg-blue-600 opacity-0 group-hover:opacity-10 transition-opacity"></div>
           </div>
           <div>
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">إجمالي المنتمين</p>
             <p className="text-3xl font-black text-gray-900">{stats.total}</p>
           </div>
         </div>
-        
         <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm flex items-center gap-5">
           <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
             <Activity className="w-8 h-8" />
@@ -288,7 +378,6 @@ export default function Home({ onAddMember }: HomeProps) {
             <p className="text-3xl font-black text-gray-900">{Object.keys(stats.byGovernorate).length}</p>
           </div>
         </div>
-
         <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm lg:col-span-2 overflow-hidden relative">
           <div className="flex items-center justify-between mb-4">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">توزيع المنتمين حسب المحافظة</p>
@@ -306,7 +395,7 @@ export default function Home({ onAddMember }: HomeProps) {
       </div>
 
       {/* Search and Table Section */}
-      <div className="bg-white rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.03)] border border-gray-100 overflow-hidden">
+      <div id="members-table-container" className="bg-white rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.03)] border border-gray-100 overflow-hidden">
         <div className="p-8 border-b border-gray-50 bg-gray-50/30 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-white rounded-2xl border border-gray-100 shadow-sm">
@@ -314,8 +403,7 @@ export default function Home({ onAddMember }: HomeProps) {
             </div>
             <h2 className="text-xl font-black text-gray-800">قاعدة البيانات التنظيمية</h2>
           </div>
-          
-          <div className="relative w-full md:w-96 group">
+          <div className="relative w-full md:w-96 group no-print">
             <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none transition-colors group-focus-within:text-blue-600 text-gray-400">
               <Search className="h-5 w-5" />
             </div>
@@ -333,7 +421,7 @@ export default function Home({ onAddMember }: HomeProps) {
           <table className="min-w-full divide-y divide-gray-100">
             <thead className="bg-gray-50/10">
               <tr>
-                <th className="px-8 py-5 text-right w-10">
+                <th className="px-8 py-5 text-right w-10 no-print">
                   <input
                     type="checkbox"
                     className="w-5 h-5 text-blue-600 border-gray-200 rounded-lg focus:ring-blue-500 cursor-pointer"
@@ -342,7 +430,7 @@ export default function Home({ onAddMember }: HomeProps) {
                   />
                 </th>
                 <th onClick={() => handleSort('name')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
-                  <div className="flex items-center gap-2">الاسم الرباعي <SortIndicator column="name" /></div>
+                  <div className="flex items-center gap-2">الاسم الكامل <SortIndicator column="name" /></div>
                 </th>
                 <th className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">الهاتف</th>
                 <th onClick={() => handleSort('governorate')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
@@ -351,14 +439,14 @@ export default function Home({ onAddMember }: HomeProps) {
                 <th onClick={() => handleSort('dateAdded')} className="px-6 py-5 text-right text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] cursor-pointer group">
                   <div className="flex items-center gap-2">تاريخ الانضمام <SortIndicator column="dateAdded" /></div>
                 </th>
-                <th className="px-8 py-5 text-center text-[11px] font-black text-gray-400 uppercase tracking-[0.2em]">الإجراءات</th>
+                <th className="px-8 py-5 text-center text-[11px] font-black text-gray-400 uppercase tracking-[0.2em] no-print">الإجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {processedMembers.length > 0 ? (
                 processedMembers.map((member) => (
                   <tr key={member.id} className={`group hover:bg-blue-50/20 transition-all ${selectedIds.has(member.id!) ? 'bg-blue-50/30' : ''}`}>
-                    <td className="px-8 py-5">
+                    <td className="px-8 py-5 no-print">
                       <input
                         type="checkbox"
                         className="w-5 h-5 text-blue-600 border-gray-200 rounded-lg cursor-pointer"
@@ -373,7 +461,7 @@ export default function Home({ onAddMember }: HomeProps) {
                         </div>
                         <div className="flex flex-col">
                           <span className="text-sm font-black text-gray-900">{member.name || member.personalInformation?.fullName || 'بدون اسم'}</span>
-                          <span className="text-[10px] font-bold text-blue-500 uppercase tracking-tighter">ID: {member.id?.slice(-6)}</span>
+                          <span className="text-[10px] font-bold text-blue-500 uppercase tracking-tighter">ID: {member.id}</span>
                         </div>
                       </div>
                     </td>
@@ -384,7 +472,7 @@ export default function Home({ onAddMember }: HomeProps) {
                       </span>
                     </td>
                     <td className="px-6 py-5 text-xs text-gray-400 font-bold">{member.dateAdded}</td>
-                    <td className="px-8 py-5">
+                    <td className="px-8 py-5 no-print">
                       <div className="flex justify-center gap-3">
                         <button onClick={() => onAddMember(member.id)} className="p-3 bg-white border border-gray-100 rounded-2xl text-blue-500 hover:bg-blue-600 hover:text-white hover:border-blue-600 hover:shadow-lg hover:shadow-blue-100 transition-all active:scale-90">
                           <Edit className="w-4 h-4" />

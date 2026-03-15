@@ -1,6 +1,15 @@
 import React from 'react';
+import { Member } from '../types';
 
-export default function Page3() {
+interface PageProps {
+  data: Member;
+  onChange: (path: string, value: any) => void;
+  showToast?: (message: string, type?: 'success' | 'error') => void;
+}
+
+export default function Page3({ data, onChange }: PageProps) {
+  const details = data.workInformation?.details || {};
+
   return (
     <div className="border-4 border-double border-gray-800 p-2 mb-8 print-page-break print-break-inside-avoid bg-white overflow-hidden">
       <div className="border border-black p-4 min-h-[1000px] relative">
@@ -14,12 +23,21 @@ export default function Page3() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mb-8">
           <div className="font-bold text-lg">الدخل الشهري العام الوضع المادي:</div>
           <div className="border border-black form-row flex-1 w-full sm:w-auto">
-            <div className="form-label flex-1 justify-center">جيد</div>
-            <div className="form-field form-field-bordered flex-1 justify-center"><input type="radio" name="income" className="w-5 h-5 cursor-pointer" required title="الدخل الشهري العام" /></div>
-            <div className="form-label flex-1 justify-center border-r border-black sm:border-r-black border-r-transparent">متوسط</div>
-            <div className="form-field form-field-bordered flex-1 justify-center"><input type="radio" name="income" className="w-5 h-5 cursor-pointer" required title="الدخل الشهري العام" /></div>
-            <div className="form-label flex-1 justify-center border-r border-black sm:border-r-black border-r-transparent">مكتفى</div>
-            <div className="form-field form-field-bordered flex-1 justify-center"><input type="radio" name="income" className="w-5 h-5 cursor-pointer" required title="الدخل الشهري العام" /></div>
+            {['جيد', 'متوسط', 'مكتفى'].map((status, idx) => (
+                <React.Fragment key={status}>
+                    <div className={`form-label flex-1 justify-center ${idx > 0 ? 'border-r border-black sm:border-r-black border-r-transparent' : ''}`}>{status}</div>
+                    <div className="form-field form-field-bordered flex-1 justify-center">
+                        <input 
+                            type="radio" 
+                            name="income" 
+                            className="w-5 h-5 cursor-pointer" 
+                            required 
+                            checked={data.workInformation?.incomeStatus === status}
+                            onChange={() => onChange('workInformation.incomeStatus', status)}
+                        />
+                    </div>
+                </React.Fragment>
+            ))}
           </div>
         </div>
 
@@ -28,11 +46,25 @@ export default function Page3() {
           <div className="border border-black form-row w-full sm:w-64">
             <div className="form-label flex-1 justify-center">نعم</div>
             <div className="form-field form-field-bordered flex-1 justify-center">
-              <input type="radio" name="isWorking" className="w-5 h-5 cursor-pointer" required title="هل يعمل حالياً" />
+              <input 
+                type="radio" 
+                name="isWorking" 
+                className="w-5 h-5 cursor-pointer" 
+                required 
+                checked={data.workInformation?.isWorking === true}
+                onChange={() => onChange('workInformation.isWorking', true)}
+              />
             </div>
             <div className="form-label flex-1 justify-center border-r border-black sm:border-r-black border-r-transparent">كلا</div>
             <div className="form-field form-field-bordered flex-1 justify-center">
-              <input type="radio" name="isWorking" className="w-5 h-5 cursor-pointer" required title="هل يعمل حالياً" />
+              <input 
+                type="radio" 
+                name="isWorking" 
+                className="w-5 h-5 cursor-pointer" 
+                required 
+                checked={data.workInformation?.isWorking === false}
+                onChange={() => onChange('workInformation.isWorking', false)}
+              />
             </div>
           </div>
         </div>
@@ -44,35 +76,35 @@ export default function Page3() {
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">قطاع حكومي</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.government || ''} onChange={(e) => onChange('workInformation.details.government', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">قطاع أهلي</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.private || ''} onChange={(e) => onChange('workInformation.details.private', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">قطاع مختلط</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.mixed || ''} onChange={(e) => onChange('workInformation.details.mixed', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">العنوان</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.address || ''} onChange={(e) => onChange('workInformation.details.address', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">الوظيفة</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.jobTitle || ''} onChange={(e) => onChange('workInformation.details.jobTitle', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">تاريخ البدء</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.startDate || ''} onChange={(e) => onChange('workInformation.details.startDate', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">أوقات الدوام</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.workingHours || ''} onChange={(e) => onChange('workInformation.details.workingHours', e.target.value)} /></div>
           </div>
           <div className="form-row">
             <div className="w-48 bg-blue-200 font-bold p-2 border-l border-black flex items-center">المردود الشهري</div>
-            <div className="flex-1"><input type="text" className="form-input" /></div>
+            <div className="flex-1"><input type="text" className="form-input" value={details.monthlyIncome || ''} onChange={(e) => onChange('workInformation.details.monthlyIncome', e.target.value)} /></div>
           </div>
         </div>
 

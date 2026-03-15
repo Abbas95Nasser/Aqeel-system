@@ -27,17 +27,115 @@ interface MemberFormProps {
   memberId?: string; // If present, we are editing
 }
 
+const initialMemberState: Member = {
+  id: '',
+  name: '',
+  phone: '',
+  governorate: '',
+  dateAdded: '',
+  timestamp: 0,
+  personalInformation: {
+    fullName: '',
+    fatherName: '',
+    motherName: '',
+    birthYear: '',
+    nationality: 'عراقية',
+    ethnicity: '',
+    height: '',
+    weight: '',
+    healthStatus: '',
+    healthNotes: '',
+    socialStatus: '',
+  },
+  housingInformation: {
+    governorate: '',
+    district: '',
+    neighborhood: '',
+    zukaq: '',
+    dar: '',
+    nearestLandmark: '',
+    phone: '',
+  },
+  previousHousing: {
+    governorate: '',
+    district: '',
+    neighborhood: '',
+    zukaq: '',
+    dar: '',
+    nearestLandmark: '',
+    phone: '',
+  },
+  familyInformation: {
+    totalMembers: '',
+    males: '',
+    females: '',
+    wivesCount: '',
+    relationship: '',
+  },
+  educationInformation: {
+    level: '',
+    graduationYear: '',
+    institution: '',
+    address: '',
+    specialization: '',
+  },
+  workInformation: {
+    incomeStatus: '',
+    isWorking: false,
+    details: {},
+  },
+  politicalInformation: {
+    hasAffiliation: false,
+    affiliationDetails: '',
+    hasCivilSocietyInvolvement: false,
+    civilSocietyDetails: '',
+    isMshmoolBaath: false,
+    baathDetails: '',
+  },
+  religiousInformation: {
+    sect: '',
+    reference: '',
+  },
+  judicialInformation: {
+    questions: [false, false, false, false, false, false],
+    history: [],
+  },
+  additionalInformation: {
+    travels: [],
+    communication: [],
+    skills: [],
+    experiences: [],
+  },
+  pledgeInformation: {
+    organizerName: '',
+    organizerDate: '',
+    organizerSignature: '',
+    ownerName: '',
+    ownerDate: '',
+    ownerSignature: '',
+  },
+  documents: {
+    customIds: [],
+  },
+  metadata: {
+    createdAt: null,
+    updatedAt: null,
+    createdBy: '',
+  },
+};
+
 export default function MemberForm({ onBack, memberId }: MemberFormProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [customIds, setCustomIds] = useState<{ id: string; title: string }[]>([]);
-  const formRef = useRef<HTMLFormElement>(null);
+  const [formData, setFormData] = useState<Member>(initialMemberState);
+  const [isChanged, setIsChanged] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Auto-fill existing member data if editing
   useEffect(() => {
-    if (memberId) {
+    if (memberId && memberId !== 'new') {
       loadMemberData(memberId);
     }
   }, [memberId]);
@@ -46,8 +144,7 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
     try {
       const data = await memberService.getMember(id);
       if (data) {
-        // Here we'd fill the form inputs. Page components handle their own inputs for now.
-        // In a production app, we would use a form state management library like React Hook Form.
+        setFormData(data);
       }
     } catch (err) {
       console.error('Failed to load member data:', err);
@@ -55,97 +152,104 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
     }
   };
 
-  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
-    // Basic alert for now, Home.tsx handles the rich UI toasts
-    alert(msg);
+  const updateFormData = (path: string, value: any) => {
+    setIsChanged(true);
+    setFormData(prev => {
+      const newData = { ...prev };
+      const keys = path.split('.');
+      let current: any = newData;
+      
+      for (let i = 0; i < keys.length - 1; i++) {
+        current[keys[i]] = { ...current[keys[i]] };
+        current = current[keys[i]];
+      }
+      
+      current[keys[keys.length - 1]] = value;
+      return newData;
+    });
+  };
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
   };
 
   const handleNext = () => {
     if (currentPage < 8) setCurrentPage(currentPage + 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handlePrev = () => {
     if (currentPage > 1) setCurrentPage(currentPage - 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleFinalSubmit = async (e: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const handleSaveOnly = async () => {
     setError(null);
     setIsSubmitting(true);
-
     try {
-      // 1. Gather all data from form across all 8 pages
       const adminUid = auth.currentUser?.uid || 'anonymous';
-      
-      const getValue = (selector: string) => (document.querySelector(selector) as HTMLInputElement)?.value || '';
-      const getRadioValue = (name: string) => (document.querySelector(`input[name="${name}"]:checked`) as HTMLInputElement)?.value || '';
-
-      const formData: any = {
-        name: getValue('input[title="الاسم الرباعي واللقب"]'),
-        phone: getValue('input[title="رقم الموبايل"]'),
-        governorate: getValue('input[title="المحافظة (السكن الحالي)"]') || getValue('input[title="المحافظة"]'),
-        dateAdded: new Date().toLocaleDateString('ar-EG'),
-        timestamp: Date.now(),
-        personalInformation: {
-          fullName: getValue('input[title="الاسم الرباعي واللقب"]'),
-          fatherName: getValue('input[title="اسم الأب"]'),
-          motherName: getValue('input[title="اسم الأم"]'),
-          birthYear: getValue('input[title="سنة الولادة"]'),
-          nationality: getValue('input[title="الجنسية"]'),
-          ethnicity: getValue('input[title="القومية"]'),
-          height: getValue('input[title="الطول"]'),
-          weight: getValue('input[title="الوزن"]'),
-          healthStatus: getRadioValue('health_status'),
-          healthNotes: getValue('input[title="ملاحظات الوضع الصحي"]'),
-          socialStatus: getRadioValue('social_status'),
-        },
-        housingInformation: {
-          governorate: getValue('input[title="المحافظة (السكن الحالي)"]'),
-          district: getValue('input[title="القضاء (السكن الحالي)"]'),
-          neighborhood: getValue('input[title="المحلة (السكن الحالي)"]'),
-          zukaq: getValue('input[title="زقاق (السكن الحالي)"]'),
-          dar: getValue('input[title="رقم الدار (السكن الحالي)"]'),
-          nearestLandmark: getValue('input[title="أقرب نقطة دالة (السكن الحالي)"]'),
-          phone: getValue('input[title="رقم الهاتف (السكن الحالي)"]'),
-        },
-        educationInformation: {
-          level: getRadioValue('education_level'),
-          graduationYear: getValue('input[title="تاريخ التخرج"]'),
-          institution: getValue('input[title="آخر مؤسسة تخرج منها"]'),
-          address: getValue('input[title="العنوان التفصيلي"]'),
-          specialization: getValue('input[title="التخصص الدقيق"]'),
-        },
-        documents: {
-          nationalIdFrontUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_national_front`),
-          nationalIdBackUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_national_back`),
-          residenceCardFrontUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_residence_front`),
-          residenceCardBackUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_residence_back`),
-          voterCardFrontUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_voter_front`),
-          voterCardBackUrl: localStorage.getItem(`memberForm_${memberId || 'new'}_img_voter_back`),
-        }
+      const dataToSave = {
+        ...formData,
+        dateAdded: formData.dateAdded || new Date().toLocaleDateString('ar-EG'),
+        timestamp: formData.timestamp || Date.now(),
       };
 
-      // 3. Save to Firestore
-      let savedId = memberId;
+      // Sync summary fields only if THEY ARE EMPTY (don't overwrite manual edits)
+      if (!dataToSave.name) dataToSave.name = dataToSave.personalInformation.fullName || '';
+      if (!dataToSave.phone) dataToSave.phone = dataToSave.housingInformation.phone || '';
+      if (!dataToSave.governorate) dataToSave.governorate = dataToSave.housingInformation.governorate || '';
+
       if (memberId && memberId !== 'new') {
-         await memberService.updateMember(memberId, formData);
+        await memberService.updateMember(memberId, dataToSave);
       } else {
-         savedId = await memberService.addMember(formData, adminUid);
+        const newId = await memberService.addMember(dataToSave, adminUid);
+        // If it was a new member, we should stay in edit mode for this ID
+        // But for simplicity in this flow, we just update the local state if needed
       }
-
-      // 4. Cleanup localStorage for this member
-      const keysToRemove = Object.keys(localStorage).filter(key => key.includes(`memberForm_${memberId || 'new'}`));
-      keysToRemove.forEach(key => localStorage.removeItem(key));
-
-      setIsSuccess(true);
-      setTimeout(() => onBack(), 2000);
-    } catch (err: any) {
+      setIsChanged(false);
+      showToast('تم حفظ البيانات بنجاح', 'success');
+    } catch (err) {
       console.error(err);
-      setError('حدث خطأ أثناء حفظ البيانات. يرجى التحقق من اتصالك بالإنترنت وصلاحيات قاعدة البيانات.');
+      setError('فشل في حفظ البيانات.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const handleFinalSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const adminUid = auth.currentUser?.uid || 'anonymous';
+      const dataToSave = {
+        ...formData,
+        dateAdded: formData.dateAdded || new Date().toLocaleDateString('ar-EG'),
+        timestamp: formData.timestamp || Date.now(),
+      };
+
+      // Sync summary fields only if THEY ARE EMPTY
+      if (!dataToSave.name) dataToSave.name = dataToSave.personalInformation.fullName || '';
+      if (!dataToSave.phone) dataToSave.phone = dataToSave.housingInformation.phone || '';
+      if (!dataToSave.governorate) dataToSave.governorate = dataToSave.housingInformation.governorate || '';
+
+      if (memberId && memberId !== 'new') {
+        await memberService.updateMember(memberId, dataToSave);
+      } else {
+        await memberService.addMember(dataToSave, adminUid);
+      }
+      setIsChanged(false);
+      setIsSuccess(true);
+      setTimeout(() => onBack(), 2000);
+    } catch (err: any) {
+      console.error(err);
+      setError('حدث خطأ أثناء حفظ البيانات.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
 
   const pages = [
     { title: 'المعلومات الشخصية', icon: User, color: 'text-blue-500', bg: 'bg-blue-50' },
@@ -177,7 +281,15 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6 no-print">
         <div className="flex items-center gap-6">
           <button 
-            onClick={onBack}
+            onClick={() => {
+              if (isChanged) {
+                if (window.confirm('لديك تغييرات غير محفوظة، هل تريد العودة دون حفظ؟')) {
+                  onBack();
+                }
+              } else {
+                onBack();
+              }
+            }}
             className="p-4 bg-white hover:bg-red-50 text-red-500 rounded-3xl shadow-xl shadow-red-50 border border-gray-100 transition-all hover:scale-110 active:scale-90"
           >
             <X className="w-6 h-6" />
@@ -204,26 +316,19 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
             <Printer className="w-5 h-5" />
             طباعة الاستمارة
           </button>
-          {currentPage === 8 ? (
-            <button 
-              type="button"
-              onClick={handleFinalSubmit}
-              disabled={isSubmitting}
-              className="flex items-center gap-2 bg-emerald-600 text-white font-black px-10 py-3.5 rounded-2xl hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 disabled:opacity-50"
-            >
-              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-              حفظ الاستمارة في Firestore
-            </button>
-          ) : (
-            <button 
-              type="button"
-              onClick={handleNext}
-              className="flex items-center gap-2 bg-blue-600 text-white font-black px-10 py-3.5 rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 transform hover:-translate-y-1 active:translate-y-0"
-            >
-              الصفحة التالية
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          )}
+          <button 
+            type="button"
+            onClick={currentPage === 8 ? handleFinalSubmit : handleSaveOnly}
+            disabled={isSubmitting}
+            className={`flex items-center gap-2 font-black px-10 py-3.5 rounded-2xl transition-all shadow-xl disabled:opacity-50 ${
+              currentPage === 8 
+                ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100' 
+                : 'bg-amber-500 text-white hover:bg-amber-600 shadow-amber-100'
+            }`}
+          >
+            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            {currentPage === 8 ? 'حفظ نهائي' : 'حفظ كمسودة'}
+          </button>
         </div>
       </div>
 
@@ -278,7 +383,7 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
       )}
 
       {/* Form Content */}
-      <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="relative print:m-0">
+      <form onSubmit={(e) => e.preventDefault()} className="relative print:m-0">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentPage}
@@ -287,14 +392,14 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
             exit={{ opacity: 0, x: -20, filter: 'blur(10px)' }}
             transition={{ duration: 0.4, ease: "circOut" }}
           >
-            {currentPage === 1 && <Page1 />}
-            {currentPage === 2 && <Page2 />}
-            {currentPage === 3 && <Page3 />}
-            {currentPage === 4 && <Page4 />}
-            {currentPage === 5 && <Page5 />}
-            {currentPage === 6 && <Page6 />}
-            {currentPage === 7 && <Page7 memberId={memberId || 'new'} />}
-            {currentPage === 8 && <Page8 customIds={customIds} setCustomIds={setCustomIds} memberId={memberId || 'new'} showToast={showToast} />}
+            {currentPage === 1 && <Page1 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 2 && <Page2 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 3 && <Page3 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 4 && <Page4 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 5 && <Page5 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 6 && <Page6 data={formData} onChange={updateFormData} showToast={showToast} />}
+            {currentPage === 7 && <Page7 data={formData} onChange={updateFormData} memberId={memberId || 'new'} showToast={showToast} />}
+            {currentPage === 8 && <Page8 data={formData} onChange={updateFormData} memberId={memberId || 'new'} showToast={showToast} />}
           </motion.div>
         </AnimatePresence>
 
@@ -338,6 +443,31 @@ export default function MemberForm({ onBack, memberId }: MemberFormProps) {
           </button>
         </div>
       </form>
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            layout
+            initial={{ opacity: 0, y: -40, x: '-50%', scale: 0.8, filter: 'blur(10px)' }}
+            animate={{ opacity: 1, y: 0, x: '-50%', scale: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: -20, x: '-50%', scale: 0.9, filter: 'blur(5px)' }}
+            className={`fixed top-6 left-1/2 flex items-center gap-4 px-6 py-4 rounded-[24px] shadow-[0_30px_60px_rgba(0,0,0,0.12)] z-[200] font-bold no-print min-w-[360px] border-2 backdrop-blur-xl ${
+              toast.type === 'success' ? 'bg-white/90 border-emerald-100 text-emerald-900' : 'bg-white/90 border-red-100 text-red-900'
+            }`}
+          >
+            <div className={`p-3 rounded-2xl ${toast.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+              {toast.type === 'success' ? <CheckCircle2 className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+            </div>
+            <div className="flex flex-col flex-1">
+              <span className="text-sm font-black">{toast.message}</span>
+            </div>
+            <button onClick={() => setToast(null)} className="p-2 rounded-2xl hover:bg-gray-100">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

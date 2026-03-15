@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* @theme is a valid Tailwind CSS v4 directive. Ignore VS Code "Unknown at rule" warnings. */
 @theme {
   --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
 }
@@ -63,6 +64,7 @@
     background-color: #93c5fd !important;
     color: #000000 !important;
     -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   input, textarea, select {

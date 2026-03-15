@@ -107,8 +107,10 @@ export interface Member {
   pledgeInformation: {
     organizerName: string;
     organizerDate: string;
+    organizerSignature: string;
     ownerName: string;
     ownerDate: string;
+    ownerSignature: string;
   };
   documents: {
     personalPhotoUrl?: string;
