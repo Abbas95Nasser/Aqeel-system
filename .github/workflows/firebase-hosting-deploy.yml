@@ -19,8 +19,10 @@ jobs:
         run: npm run build
       - name: Deploy to Firebase Hosting (Aqeel System)
         uses: FirebaseExtended/action-hosting-deploy@v0
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AMWALI_IQ }}
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_AMWALI_IQ }}
+          firebaseServiceAccount: ${{ env.FIREBASE_SERVICE_ACCOUNT }}
           projectId: amwali-iq
           target: aqeel
